@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Météo Wädenswil">
+<title>Météo Wädenswil</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+  body { font-family: system-ui; background: #0f1419; color: #e8eef3; margin: 0; padding: 16px; max-width: 900px; margin: auto; }
+  h1 { font-size: 1.4em; margin: 4px 0 2px; }
+  .sous { color: #8a9aa8; font-size: 0.85em; margin-bottom: 14px; }
+  .principal { display: flex; align-items: center; gap: 16px; margin-bottom: 14px; }
+  .temp { font-size: 3.6em; font-weight: 700; }
+  .grille { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }
+  .carte { background: #1a232c; border-radius: 14px; padding: 12px; }
+  .carte .label { color: #8a9aa8; font-size: 0.8em; }
+  .carte .valeur { font-size: 1.4em; font-weight: 600; margin-top: 4px; }
+  .fleche { display: inline-block; transition: transform 0.5s; }
+  h2 { font-size: 1.1em; margin: 22px 0 10px; }
+  #radar { height: 380px; border-radius: 14px; }
+  .controles { display: flex; align-items: center; gap: 10px; margin-top: 8px; font-size: 0.9em; }
+  .controles button { background: #1a232c; color: #e8eef3; border: 1px solid #333; border-radius: 10px; padding: 6px 14px; font-size: 1em; }
+  .previsions { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; }
+  .heure { background: #1a232c; border-radius: 12px; padding: 10px; min-width: 62px; text-align: center; flex: 0 0 auto; }
+  .heure .h { color: #8a9aa8; font-size: 0.8em; }
+  .heure .e { font-size: 1.6em; margin: 4px 0; }
+  .heure .p { color: #5fb0ff; font-size: 0.8em; }
+  .credits { color: #5c6b78; font-size: 0.75em; margin-top: 24px; }
+  .credits a { color: #7a8b99; }
+</style>
+</head>
+<body>
+
+<h1>Wädenswil en direct</h1>
+<div class="sous" id="maj">Station MétéoSuisse de Wädenswil · chargement…</div>
+
+<div class="principal">
+  <div class="temp" id="temp">–</div>
+  <div id="ressenti" class="sous"></div>
+</div>
+
+<div class="grille">
+  <div class="carte"><div class="label">Vent</div><div class="valeur" id="vent">–</div></div>
+  <div class="carte"><div class="label">Rafales</div><div class="valeur" id="rafales">–</div></div>
+  <div class="carte"><div class="label">Pluie (10 min)</div><div class="valeur" id="pluie">–</div></div>
+  <div class="carte"><div class="label">Humidité</div><div class="valeur" id="humidite">–</div></div>
+  <div class="carte"><div class="label">Pression</div><div class="valeur" id="pression">–</div></div>
+  <div class="carte"><div class="label">Soleil (10 min)</div><div class="valeur" id="soleil">–</div></div>
+</div>
+
+<h2>Radar de pluie</h2>
+<div id="radar"></div>
+<div class="controles">
+  <button id="lecture">⏸</button>
+  <span id="heureRadar">–</span>
+</div>
+
+<h2>Prochaines heures</h2>
+<div class="previsions" id="previsions">Chargement…</div>
+
+<div class="credits">
+  Mesures : <a href="https://www.meteoswiss.admin.ch">MétéoSuisse</a> via <a href="https://api.existenz.ch">existenz.ch</a> ·
+  Radar : Weather data by <a href="https://www.rainviewer.com">RainViewer</a> ·
+  Prévisions : <a href="https://open-meteo.com">Open-Meteo</a> · Carte © OpenStreetMap
+</div>
+
+<script>
+const LAT = 47.2210, LON = 8.6777;        // station MétéoSuisse de Wädenswil (WAE)
+const heureFR = d => d.toLocaleTimeString("fr-CH", { hour: "2-digit", minute: "2-digit" });
+
+// ===================== 1. MESURES EN DIRECT =====================
+async function chargerMesures() {
+  try {
+    const url = "https://api.existenz.ch/apiv1/smn/latest?locations=WAE"
+              + "&parameters=tt,td,rh,rr,ss,ff,fx,dd,qff&app=meteo-wadenswil&version=1.0";
+    const data = await (await fetch(url)).json();
+    const v = {};
+    let ts = 0;
+    for (const p of data.payload || []) { v[p.par] = p.val; ts = Math.max(ts, p.timestamp || 0); }
+
+    if (v.tt === undefined) {
+      document.getElementById("maj").textContent = "Format inattendu : " + JSON.stringify(data).slice(0, 300);
+      return;
+    }
+
+    document.getElementById("temp").textContent = v.tt.toFixed(1) + "°";
+    document.getElementById("ressenti").innerHTML = v.td !== undefined ? "Point de rosée " + v.td.toFixed(1) + "°" : "";
+    // dd = direction d'où vient le vent ; la flèche montre où il va
+    document.getElementById("vent").innerHTML =
+      `<span class="fleche" style="transform: rotate(${(v.dd ?? 0) + 180}deg)">↑</span> ${Math.round(v.ff ?? 0)} km/h`;
+    document.getElementById("rafales").textContent = Math.round(v.fx ?? 0) + " km/h";
+    document.getElementById("pluie").textContent = (v.rr ?? 0).toFixed(1) + " mm";
+    document.getElementById("humidite").textContent = Math.round(v.rh ?? 0) + " %";
+    document.getElementById("pression").textContent = Math.round(v.qff ?? 0) + " hPa";
+    document.getElementById("soleil").textContent = Math.round(v.ss ?? 0) + " min";
+
+    const date = new Date(ts < 1e12 ? ts * 1000 : ts);
+    document.getElementById("maj").textContent = "Station MétéoSuisse de Wädenswil · mesure de " + heureFR(date);
+  } catch (e) {
+    document.getElementById("maj").textContent = "Erreur mesures : " + e.message;
+  }
+}
+
+// ===================== 2. RADAR ANIMÉ =====================
+const carte = L.map("radar", { zoomControl: false }).setView([LAT, LON], 9);
+L.tileLayer("https://wmts.geo.admin.ch/1.0.0/ch.swisstopo.pixelkarte-grau/default/current/3857/{z}/{x}/{y}.jpeg", {
+  maxZoom: 18, attribution: "© swisstopo"
+}).addTo(carte);
+L.circleMarker([LAT, LON], { radius: 7, color: "#fff", weight: 2, fillColor: "#ff4d4d", fillOpacity: 1 })
+  .bindPopup("Wädenswil").addTo(carte);
+
+let images = [], calques = [], position = 0, enLecture = true, minuteur = null;
+
+async function chargerRadar() {
+  try {
+    const data = await (await fetch("https://api.rainviewer.com/public/weather-maps.json")).json();
+    calques.forEach(c => carte.removeLayer(c));
+    images = [...(data.radar?.past || []), ...(data.radar?.nowcast || [])];
+    calques = images.map(img => L.tileLayer(
+      data.host + img.path + "/256/{z}/{x}/{y}/2/1_1.png",
+            { opacity: 0, maxNativeZoom: 7, maxZoom: 18, zIndex: 10 }
+    ).addTo(carte));
+    position = images.length - 1;
+    afficherImage();
+    if (enLecture) demarrer();
+  } catch (e) {
+    document.getElementById("heureRadar").textContent = "Erreur radar : " + e.message;
+  }
+}
+
+function afficherImage() {
+  calques.forEach((c, i) => c.setOpacity(i === position ? 0.75 : 0));
+  const img = images[position];
+  if (!img) return;
+  const futur = img.time * 1000 > Date.now();
+  document.getElementById("heureRadar").textContent =
+    heureFR(new Date(img.time * 1000)) + (futur ? " (prévision)" : "");
+}
+
+function demarrer() {
+  clearInterval(minuteur);
+  minuteur = setInterval(() => { position = (position + 1) % images.length; afficherImage(); }, 600);
+}
+
+document.getElementById("lecture").onclick = () => {
+  enLecture = !enLecture;
+  document.getElementById("lecture").textContent = enLecture ? "⏸" : "▶";
+  enLecture ? demarrer() : clearInterval(minuteur);
+};
+
+// ===================== 3. PRÉVISIONS =====================
+const icone = c => c === 0 ? "☀️" : c <= 2 ? "🌤️" : c === 3 ? "☁️" : c <= 48 ? "🌫️" : c <= 57 ? "🌦️"
+                 : c <= 67 ? "🌧️" : c <= 77 ? "🌨️" : c <= 82 ? "🌧️" : c <= 86 ? "🌨️" : "⛈️";
+
+async function chargerPrevisions() {
+  try {
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}`
+              + "&hourly=temperature_2m,precipitation_probability,weather_code"
+              + "&timezone=Europe%2FZurich&forecast_days=2";
+    const d = await (await fetch(url)).json();
+    const maintenant = Date.now() - 3600000;
+    const heures = d.hourly.time
+      .map((t, i) => ({ t: new Date(t), temp: d.hourly.temperature_2m[i],
+                        pluie: d.hourly.precipitation_probability[i], code: d.hourly.weather_code[i] }))
+      .filter(h => h.t.getTime() >= maintenant)
+      .slice(0, 24);
+    document.getElementById("previsions").innerHTML = heures.map(h => `
+      <div class="heure">
+        <div class="h">${h.t.getHours()} h</div>
+        <div class="e">${icone(h.code)}</div>
+        <div>${Math.round(h.temp)}°</div>
+        <div class="p">${h.pluie ?? 0} %</div>
+      </div>`).join("");
+  } catch (e) {
+    document.getElementById("previsions").textContent = "Erreur prévisions : " + e.message;
+  }
+}
+
+// ===================== DÉMARRAGE ET MISES À JOUR =====================
+chargerMesures();
+chargerRadar();
+chargerPrevisions();
+setInterval(chargerMesures, 5 * 60000);     // la station publie toutes les 10 min
+setInterval(chargerRadar, 5 * 60000);       // le radar se met à jour toutes les 5 min
+setInterval(chargerPrevisions, 30 * 60000);
+</script>
+</body>
+</html>
